@@ -13,5 +13,5 @@ Add your phone number on Row 99, and get moving!
 `if (!fona.sendSMS("18082992345", message)) {`
 
 ## Layout
-![Fritzing Layout](/Users/justinwagg/Documents/Arduino/car-tracker2/car-tracker.jpg)
+![Fritzing Layout](car-tracker.jpg)
 
