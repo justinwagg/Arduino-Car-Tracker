@@ -9,9 +9,6 @@ Adafruit's FONA 808 is a convenient partner for the Pro-Mini in this project. Th
 ## Configuration
 In general, not much is needed after getting the project wired up. [Adafruit's FONA documentation](https://learn.adafruit.com/adafruit-fona-808-cellular-plus-gps-breakout/overview) is a good resource on getting up and running. 
 
-Add your phone number on Row 99, and get moving!
-`if (!fona.sendSMS("18082992345", message)) {`
-
 ## Layout
 ![Fritzing Layout](car-tracker.jpg)
 
