@@ -17,7 +17,7 @@ unsigned long onMillis;
 unsigned long offMillis;
 const long led_interval = 2500;
 
-int error_level = 1;
+int error_level = 0;
 
 const int voltage_pin = A1;
 float last_voltage;
@@ -31,6 +31,7 @@ boolean have_valid_location = false;
 bool have_message = false;
 uint16_t vbat;
 
+char sendto[21] = "";
 char message[80];
 
 SoftwareSerial fonaSS = SoftwareSerial(FONA_TX, FONA_RX);
@@ -44,31 +45,22 @@ void setup() {
   // led
   pinMode(redPin, OUTPUT);
   pinMode(greenPin, OUTPUT);
-  pinMode(bluePin, OUTPUT);  
+  pinMode(bluePin, OUTPUT);
 
   pinMode(FONA_PWR_STAT, INPUT);
   digitalWrite(FONA_PWR_STAT, HIGH);
 
   pinMode(FONA_PWR, OUTPUT);
 
-  // If the FONA is off, turn it on.
-  // If programming sometimes the FONA will be on already at boot
-  if (!digitalRead(FONA_PWR_STAT)) {
-    Serial.println(F("FONA BOOT STATUS: FONA is off."));
-    fona_toggle_pwr(true);
+  // If the FONA is on, turn it off.
+  if (digitalRead(FONA_PWR_STAT)) {
+    Serial.println(F("BOOT STATUS: FONA is ON, Turning FONA OFF."));
+    fona_toggle_pwr(false);
   }
   else {
-    Serial.println(F("FONA BOOT STATUS: FONA is on."));
+    Serial.println(F("BOOT STATUS: FONA is already OFF."));
   }
 
-
-  //  fonaSerial->begin(4800);
-  //  if (! fona.begin(*fonaSerial)) {
-  //    Serial.println(F("Couldn't find FONA"));
-  //    while (1);
-  //  }
-  //  Serial.println(F("FONA is OK"));
-  //  fona.enableGPS(true);
 
   last_voltage = (float)(analogRead(voltage_pin) / 1024.0) * 3.3;
   last_check = millis();
@@ -76,14 +68,20 @@ void setup() {
 
 void loop() {
 
+  if (digitalRead(FONA_PWR_STAT) && startShutdown == false) {
+    Serial.println(F("LOOP STATUS: FONA is ON, Turning FONA OFF."));
+    fona_toggle_pwr(false);
+  }
 
-  create_message();
   get_voltage();
   status_led(error_level);
-  
-  if (startShutdown && have_message) {
-    send_message();
-    go_to_sleep();
+
+  if (startShutdown) {
+    create_message();
+    if (have_message) {
+      send_message();
+      go_to_sleep();
+    }
   }
 
 
@@ -95,8 +93,7 @@ bool send_message() {
   int attempts = 3;
   int x = 0;
   do {
-//    example = "15552342345"
-    if (!fona.sendSMS("", message)) {
+    if (!fona.sendSMS(sendto, message)) {
       Serial.println(F("SMS Failed"));
       message_sent = false;
       error_level = 2;
@@ -115,6 +112,13 @@ bool send_message() {
 
 void create_message() {
 
+  if (!digitalRead(FONA_PWR_STAT)) {
+    Serial.println(F("FONA BOOT STATUS: FONA is off."));
+    fona_toggle_pwr(true);
+  }
+  else {
+    //    Serial.println(F("FONA BOOT STATUS: FONA is on."));
+  }
 
   if (millis() - last_check > 1000) {
 
@@ -142,8 +146,11 @@ void create_message() {
     last_check = millis();
   }
 
-  if(have_message && have_valid_location){
+  if (have_message && have_valid_location) {
     error_level = 0;
+  }
+  else {
+    error_level = 1;
   }
 
 }
@@ -183,7 +190,8 @@ static void get_voltage() {
   if ( current_voltage < .5 && last_voltage >= .5 ) {
     startShutdown = true;
     shutdown_start_millis = millis();
-    Serial.println(F("Hit shutdown"));
+    //    last_voltage = current_voltage;
+    //    Serial.println(F("Hit shutdown"));
   }
   else {
     last_voltage = current_voltage;
@@ -193,7 +201,7 @@ static void get_voltage() {
 }
 
 void go_to_sleep() {
-  
+
   setColor(0, 0, 0);
   Serial.println(F("go_to_sleep function:"));
   attachInterrupt(0, wakeUp, RISING);
@@ -203,7 +211,9 @@ void go_to_sleep() {
   LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);
   detachInterrupt(0);
   Serial.println(F("Interrupt Hit, Good Morning!"));
-  fona_toggle_pwr(true);
+  //  fona_toggle_pwr(true);
+  startShutdown = false;
+  error_level = 0;
 
 }
 
