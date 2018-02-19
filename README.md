@@ -11,4 +11,6 @@ In general, not much is needed after getting the project wired up. [Adafruit's F
 
 ## Layout
 ![Fritzing Layout](car-tracker.jpg)
+## Flow
+![Fritzing Layout](car-tracker-diagram.jpg)
 
