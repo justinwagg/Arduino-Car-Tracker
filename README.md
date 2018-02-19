@@ -14,4 +14,6 @@ Add your phone number on Row 99, and get moving!
 
 ## Layout
 ![Fritzing Layout](car-tracker.jpg)
+## Flow
+![Fritzing Layout](car-tracker-diagram.jpg)
 

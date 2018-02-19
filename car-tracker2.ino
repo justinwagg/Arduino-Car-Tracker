@@ -16,54 +16,65 @@ int ledState = LOW;
 unsigned long onMillis;
 unsigned long offMillis;
 const long led_interval = 2500;
-
 int error_level = 0;
 
 const int voltage_pin = A1;
 float last_voltage;
 
 bool startShutdown = false;
-unsigned long shutdown_start_millis;
-unsigned long last_check;
+bool have_valid_location = false;
+bool have_battery_pct = false;
+bool message_sent = false;
 
 
-boolean have_valid_location = false;
-bool have_message = false;
-uint16_t vbat;
 
 char sendto[21] = "";
 char message[80];
+
+uint16_t vbat;
 
 SoftwareSerial fonaSS = SoftwareSerial(FONA_TX, FONA_RX);
 SoftwareSerial *fonaSerial = &fonaSS;
 Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
 
 void setup() {
-
   Serial.begin(9600);
 
-  // led
+  // Status LED
   pinMode(redPin, OUTPUT);
   pinMode(greenPin, OUTPUT);
   pinMode(bluePin, OUTPUT);
-
+  // Pin reads the PSTAT pin on the FONA, and will be HIGH when the FONA is on
   pinMode(FONA_PWR_STAT, INPUT);
-  digitalWrite(FONA_PWR_STAT, HIGH);
 
+  // Pin controls the KEY pin on the FONA, driving HIGH for 2 seconds, then LOW for 2 seconds will toggle the power
   pinMode(FONA_PWR, OUTPUT);
 
-  // If the FONA is on, turn it off.
+  Serial.println(F("BOOT STATUS: Delaying 5 Seconds to Start"));
+  counter_delay(5000);
+
+  // Determine whether the FONA is ON, if it is, we need to turn it OFF
   if (digitalRead(FONA_PWR_STAT)) {
-    Serial.println(F("BOOT STATUS: FONA is ON, Turning FONA OFF."));
+    Serial.println(F("VOID SETUP: FONA is ON, Turning FONA OFF.\n"));
     fona_toggle_pwr(false);
   }
   else {
-    Serial.println(F("BOOT STATUS: FONA is already OFF."));
+    Serial.println(F("VOID SETUP: FONA is already OFF.\n"));
+  }
+
+  // Determine whether the 5v jack is supplying power. If it is, we should go into void_loop as normal
+  // If not, we should go to sleep and wait for the next plugin.
+  last_voltage = (float)(analogRead(voltage_pin) / 1024.0) * 3.3;
+
+  if (last_voltage >= .5) {
+    Serial.println(F("VOID SETUP: 5v jack is supplying power. Continue as normal.\n"));
+  }
+  else {
+    Serial.println(F("VOID SETUP: 5v jack is not supply power. Going into low power mode.\n"));
+    go_to_sleep();
   }
 
 
-  last_voltage = (float)(analogRead(voltage_pin) / 1024.0) * 3.3;
-  last_check = millis();
 }
 
 void loop() {
@@ -73,55 +84,61 @@ void loop() {
     fona_toggle_pwr(false);
   }
 
-  get_voltage();
   status_led(error_level);
 
+  // get_voltage() sets the global variable startShutdown
+  get_voltage();
+
   if (startShutdown) {
-    create_message();
-    if (have_message) {
-      send_message();
+    // Turn the FONA On
+    fona_toggle_pwr(true);
+    // get_gps_location() sets global variable have_valid_location
+    get_battery(); // Will return a battery % even if 30x attempts fail.
+    get_gps_location();
+    if (have_valid_location) {
+      send_sms();
+      fona_toggle_pwr(false);
+      go_to_sleep();
+    }
+    else {
+      Serial.println(F("VOID LOOP: Unable to Fix GPS Location, Going to Sleep\n"));
+      fona_toggle_pwr(false);
       go_to_sleep();
     }
   }
 
-
 }
 
-bool send_message() {
 
-  bool message_sent = false;
-  int attempts = 3;
-  int x = 0;
+
+
+void get_battery() {
+  // Try to get the battery percentage
+  Serial.println(F("Attempting to get battery life from FONA"));
+  int tries = 0;
+  have_battery_pct = false;
   do {
-    if (!fona.sendSMS(sendto, message)) {
-      Serial.println(F("SMS Failed"));
-      message_sent = false;
-      error_level = 2;
-      ++x;
-    } else {
-      Serial.println(F("SMS Sent!"));
-      message_sent = true;
-      error_level = 0;
-      break;
+    have_battery_pct = fona.getBattPercent(&vbat);
+    if (have_battery_pct) {
+      return have_battery_pct;
     }
-    delay(100);
+    ++tries;
+    delay(1000);
   }
-  while (x <= attempts);
-  return message_sent;
+  while (tries <= 30);
+  if (!have_battery_pct) {
+    vbat = 00;
+    have_battery_pct = true;
+  }
+  Serial.print(F("The battery has a value of "));
+  Serial.println(vbat);
+  Serial.print(" out of 100% \n");
 }
 
-void create_message() {
-
-  if (!digitalRead(FONA_PWR_STAT)) {
-    Serial.println(F("FONA BOOT STATUS: FONA is off."));
-    fona_toggle_pwr(true);
-  }
-  else {
-    //    Serial.println(F("FONA BOOT STATUS: FONA is on."));
-  }
-
-  if (millis() - last_check > 1000) {
-
+void get_gps_location() {
+  Serial.println(F("Attempting to grab the most up to date GPS Fix on the location./n"));
+  int tries = 0;
+  do {
     float latitude, longitude, speed_kph, heading, speed_mph, altitude;
     have_valid_location = fona.getGPS(&latitude, &longitude, &speed_kph, &heading, &altitude);
     char LAT[10];
@@ -130,34 +147,43 @@ void create_message() {
     if (have_valid_location) {
       dtostrf(latitude, 8, 6, LAT);
       dtostrf(longitude, 8, 6, LONG);
+      sprintf(message, "Location:\nmaps.google.com/?q=""%s,%s""\nBatt: ""%u""%%", LAT, LONG, vbat);
+      Serial.println(F("Sucessfully put together the URL string, including the GPS fix./n"));
+      Serial.println(message);
+      return have_valid_location;
     } else {
       Serial.println(F("Waiting for FONA GPS 3D fix..."));
     }
+    delay(1000);
+  } while ( tries < 500 );
+}
 
-    // Get battery %
-    bool have_battery_pct = fona.getBattPercent(&vbat);
-    if (have_battery_pct && have_valid_location) {
-      sprintf(message, "Location:\nmaps.google.com/?q=""%s,%s""\nBatt: ""%u""%%", LAT, LONG, vbat);
-      Serial.println(message);
-      have_message = true;
+void send_sms() {
+
+
+  // Send SMS
+  Serial.println(F("Attempting to send the SMS Message: \n"));
+  Serial.print(message);
+  Serial.print(F("\n"));
+  bool message_sent = false;
+  int tries = 0;
+  do {
+    if (!fona.sendSMS(sendto, message)) {
+      Serial.println(F("SMS Failed"));
+      message_sent = false;
+      ++tries;
     } else {
-      have_message = false;
+      Serial.println(F("SMS Sent!"));
+      message_sent = true;
+      break;
     }
-    last_check = millis();
+    delay(100);
   }
-
-  if (have_message && have_valid_location) {
-    error_level = 0;
-  }
-  else {
-    error_level = 1;
-  }
+  while (tries <= 4);
 
 }
 
 void fona_toggle_pwr(bool booting) {
-
-  Serial.println(F("Toggling FONA power."));
 
   digitalWrite(FONA_PWR, HIGH);
   delay(2000);
@@ -165,8 +191,8 @@ void fona_toggle_pwr(bool booting) {
   delay(2000);
   digitalWrite(FONA_PWR, HIGH);
 
-
   if (booting) {
+    Serial.println(F("Booting - starting Serial FONA comms."));
     fonaSerial->begin(4800);
     if (! fona.begin(*fonaSerial)) {
       Serial.println(F("Couldn't find FONA"));
@@ -181,55 +207,45 @@ void fona_toggle_pwr(bool booting) {
 
 }
 
-
-static void get_voltage() {
+void get_voltage() {
 
   float current_voltage = analogRead(voltage_pin);
   current_voltage = (float)(current_voltage / 1024.0) * 3.3;
-  //  Serial.println(current_voltage);
   if ( current_voltage < .5 && last_voltage >= .5 ) {
     startShutdown = true;
-    shutdown_start_millis = millis();
-    //    last_voltage = current_voltage;
-    //    Serial.println(F("Hit shutdown"));
   }
   else {
-    last_voltage = current_voltage;
     startShutdown = false;
   }
+  last_voltage = current_voltage;
 
 }
 
 void go_to_sleep() {
 
   setColor(0, 0, 0);
-  Serial.println(F("go_to_sleep function:"));
   attachInterrupt(0, wakeUp, RISING);
-  fona_toggle_pwr(false);
-  Serial.println(F("Shutdown FONA - Delaying Arduino Sleep for 5 Seconds"));
   counter_delay(5000);
   LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);
   detachInterrupt(0);
-  Serial.println(F("Interrupt Hit, Good Morning!"));
-  //  fona_toggle_pwr(true);
+  Serial.println(F("Ignition Started - In standby until next shutdown of automobile."));
+
   startShutdown = false;
   error_level = 0;
+  // Car power when turning on goes high-low-high. Delay seeks toavoid  putting FONA to sleep because of this.
+  delay(5000);
 
 }
-
-
 
 void wakeUp() {
   // Just a handler for the pin interrupt.
 }
-
 
 void counter_delay(long delay_millis) {
 
   unsigned long started = millis();
   unsigned long last_print = 0;
   do {
-
     unsigned long time_till_continue = delay_millis - (millis() - started);
     if (millis() - last_print > 1000) {
       Serial.println(time_till_continue / 1000);
@@ -273,4 +289,3 @@ void setColor(int red, int green, int blue) {
   analogWrite(greenPin, green);
   analogWrite(bluePin, blue);
 }
-
