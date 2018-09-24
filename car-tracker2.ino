@@ -26,8 +26,10 @@ bool have_valid_location = false;
 bool have_battery_pct = false;
 bool message_sent = false;
 
-
-
+/* Example
+ * char sendto[21] = "5552149854";
+ */
+ 
 char sendto[21] = "";
 char message[80];
 
@@ -147,7 +149,7 @@ void get_gps_location() {
     if (have_valid_location) {
       dtostrf(latitude, 8, 6, LAT);
       dtostrf(longitude, 8, 6, LONG);
-      sprintf(message, "Location:\nmaps.google.com/?q=""%s,%s""\nBatt: ""%u""%%", LAT, LONG, vbat);
+      sprintf(message, "%s,%s,%u", LAT, LONG, vbat);
       Serial.println(F("Sucessfully put together the URL string, including the GPS fix./n"));
       Serial.println(message);
       return have_valid_location;
